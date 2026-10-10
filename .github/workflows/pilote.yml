@@ -1,0 +1,44 @@
+name: Pilote clim
+on:
+  schedule:
+    - cron: '2-59/5 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: pilote
+  cancel-in-progress: false
+jobs:
+  pilote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TZ: Europe/Paris
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: pilote
+          path: data
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Préparer
+        run: npm install --prefix pilote jsdom@24.1.3 --no-audit --no-fund --silent
+      - name: Passage du pilote
+        run: node pilote/run.js
+        env:
+          MEL_EMAIL: ${{ secrets.MEL_EMAIL }}
+          MEL_PASSWORD: ${{ secrets.MEL_PASSWORD }}
+          NODE_PATH: pilote/node_modules
+      - name: Enregistrer l'état (chiffré)
+        if: always()
+        run: |
+          cd data
+          git config user.name "pilote-clim"
+          git config user.email "pilote-clim@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then echo "rien à enregistrer"; exit 0; fi
+          git commit -q -m "état du pilote"
+          for i in 1 2 3; do git pull -q --rebase && git push -q && exit 0; sleep 3; done
+          exit 1
