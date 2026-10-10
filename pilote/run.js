@@ -21,7 +21,7 @@ async function dec(txt,k){ const e=JSON.parse(txt);
 const rd=f=>{ try{ return fs.readFileSync(path.join(DATA,f),'utf8'); }catch(e){ return null; } };
 
 (async()=>{
-  if(!EMAIL||!PASS){ console.log('⛔ Secrets MEL_EMAIL / MEL_PASSWORD absents : ajoutez-les dans Settings → Secrets → Actions.'); process.exit(1); }
+  if(!EMAIL||!PASS){ console.log('⛔ Secrets MEL_EMAIL / MEL_PASSWORD absents : ajoutez-les dans Settings → Secrets → Actions.'); process.exit(0); }
   const k=await key();
   let cfg=null, st={};
   const cfgTxt=rd('config.json'), stTxt=rd('state.json');
@@ -80,5 +80,5 @@ const rd=f=>{ try{ return fs.readFileSync(path.join(DATA,f),'utf8'); }catch(e){ 
   const newSig=JSON.stringify({...out,lastRun:0,journal:out.journal.slice(0,3)});
   if(prevSig!==newSig || now-(st.lastRun||0)>=30*60000) fs.writeFileSync(path.join(DATA,'state.json'),await enc(out,k));
   console.log(out.ok?'✅ passage effectué':'❌ échec du passage (détail chiffré dans state.json)');
-  dom.window.close(); process.exit(out.ok?0:1);
-})().catch(e=>{ console.log('❌ erreur technique'); process.exit(1); });
+  dom.window.close(); process.exit(0);   // pas d'e-mail d'échec toutes les 5 min : l'erreur est visible dans l'app
+})().catch(e=>{ console.log('❌ erreur technique'); process.exit(0); });
