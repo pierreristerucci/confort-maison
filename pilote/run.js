@@ -88,7 +88,8 @@ const rd=f=>{ try{ return fs.readFileSync(path.join(DATA,f),'utf8'); }catch(e){ 
   console.log(out.ok?'✅ passage effectué':'❌ échec du passage (détail chiffré dans state.json)');
   // Indicateur public sans donnée personnelle (visible dans l'onglet Actions)
   const errCat=(out.error||'').replace(/[\r\n]/g,' ').slice(0,80);
-  console.log(out.ok?'::notice title=Pilote clim::Passage OK — clim lue et pilotage appliqué'
+  const modeCat=S.remoteMode?'en attente (mode télécommande — touchez 🎮 dans l’app)':(S.dehumid&&S.dehumid.active?'déshumidification':(S.smartOn===false?'pilotage désactivé':'pilotage intelligent'));
+  console.log(out.ok?'::notice title=Pilote clim::Passage OK — '+modeCat
                     :'::warning title=Pilote clim::Échec : '+errCat);
   dom.window.close(); process.exit(0);   // pas d'e-mail d'échec toutes les 5 min : l'erreur est visible dans l'app
 })().catch(e=>{ console.log('❌ erreur technique'); process.exit(0); });
