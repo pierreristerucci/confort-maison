@@ -620,6 +620,11 @@ if('serviceWorker' in navigator){
         <div id="cloud-settings"></div>
       </div>
       <div class="panel-section">
+        <div style="font-size:13px;font-weight:600;margin-bottom:4px">⏱️ Passages toutes les 5 min (cron-job.org)</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px">GitHub seul ne lance le pilote que quelques fois par jour. Ce service gratuit le lance toutes les 5 minutes.</div>
+        <div id="cron-helper"></div>
+      </div>
+      <div class="panel-section">
         <div style="font-size:13px;font-weight:600;margin-bottom:4px">🧾 Journal technique</div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Chaque commande envoyée à la clim et la réponse de MELCloud. En cas de souci, faites une capture de cet écran.</div>
         <div id="journal" style="max-height:260px;overflow-y:auto"></div>
@@ -3351,6 +3356,45 @@ if(IS_CLOUD){
   (function(){ const st=setTab; setTab=function(n,el){ st(n,el); if(n==='settings'){ renderCloudSettings(); cloudRefresh(); } }; })();
   // Consultation régulière de l'état du pilote cloud
   (function(){ const c=connectAndStart; connectAndStart=async function(e,p){ const r=await c(e,p); setInterval(cloudRefresh,2*60000); return r; }; })();
+}
+
+
+// ══════════════════════════════════════════════════════
+// ASSISTANT cron-job.org : tout se copie en un appui
+// ══════════════════════════════════════════════════════
+if(!IS_CLOUD){
+  const CRON_URL='https://api.github.com/repos/'+CLOUD.repo+'/actions/workflows/'+CLOUD.wf+'/dispatches';
+  window.copyTxt=async function(txt,label){
+    try{ await navigator.clipboard.writeText(txt); toast('📋 '+label+' copié — collez-le dans cron-job.org'); }
+    catch(e){ const t=document.createElement('textarea'); t.value=txt; document.body.appendChild(t); t.select();
+      try{ document.execCommand('copy'); toast('📋 '+label+' copié'); }catch(x){ toast('Copie impossible : appui long sur le texte','err'); } t.remove(); }
+  };
+  window.renderCronHelper=function(){
+    const el=$id('cron-helper'); if(!el) return;
+    if(!S.cloud.token){ el.innerHTML='<div style="font-size:12px;color:var(--warn)">Enregistrez d’abord le token du téléphone ci-dessus.</div>'; return; }
+    const row=(n,lbl,val,show)=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)">
+      <span style="background:var(--clim);color:#000;border-radius:50%;min-width:20px;height:20px;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center">${n}</span>
+      <div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600">${lbl}</div>
+        <div style="font-size:10px;color:var(--muted);font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${show}</div></div>
+      <button onclick="copyTxt(${JSON.stringify(val).replace(/"/g,'&quot;')},'${lbl}')" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:12px;cursor:pointer">📋 Copier</button></div>`;
+    el.innerHTML=`
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Sur cron-job.org : <b>Create cronjob</b>, puis copiez/collez dans l'ordre :</div>
+      ${row(1,'Title','Pilote clim','Pilote clim')}
+      ${row(2,'URL',CRON_URL,CRON_URL)}
+      <div style="font-size:11px;padding:7px 0;border-bottom:1px solid var(--border)"><b>3 · Execution schedule</b> : choisissez <b>Every 5 minutes</b></div>
+      <div style="font-size:11px;padding:7px 0 2px"><b>Onglet ADVANCED</b> → Request method : <b>POST</b></div>
+      ${row(4,'Request body','{"ref":"main"}','{"ref":"main"}')}
+      <div style="font-size:11px;padding:7px 0 2px">Headers : ajoutez 3 lignes (nom ⟶ valeur)</div>
+      ${row(5,'Header 1 : nom','Authorization','Authorization')}
+      ${row(6,'Header 1 : valeur','Bearer '+S.cloud.token,'Bearer github_pat_••••••••')}
+      ${row(7,'Header 2 : nom','Accept','Accept')}
+      ${row(8,'Header 2 : valeur','application/vnd.github+json','application/vnd.github+json')}
+      ${row(9,'Header 3 : nom','Content-Type','Content-Type')}
+      ${row(10,'Header 3 : valeur','application/json','application/json')}
+      <div style="font-size:11px;padding:8px 0 0">Puis <b>Save</b>, et dans la fiche du cronjob <b>Test run</b> → la réponse doit être <b>204</b>.</div>
+      <a href="https://console.cron-job.org/signup" target="_blank" style="display:block;margin-top:8px;text-align:center;background:var(--clim);color:#000;border-radius:8px;padding:9px;font-weight:600;font-size:13px;text-decoration:none">Ouvrir cron-job.org ↗</a>`;
+  };
+  const rcs=renderCloudSettings; window.renderCloudSettings=renderCloudSettings=function(){ rcs(); renderCronHelper(); };
 }
 
 // ══ DÉMARRAGE UNIQUE ══
