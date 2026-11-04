@@ -5,6 +5,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+  actions: read
 concurrency:
   group: pilote
   cancel-in-progress: false
@@ -30,6 +31,7 @@ jobs:
         env:
           MEL_EMAIL: ${{ secrets.MEL_EMAIL }}
           MEL_PASSWORD: ${{ secrets.MEL_PASSWORD }}
+          GITHUB_TOKEN: ${{ github.token }}
           NODE_PATH: pilote/node_modules
       - name: Enregistrer l'état (chiffré)
         if: always()

@@ -3229,8 +3229,15 @@ if(IS_CLOUD){
       const state=await cloudDecrypt(st.text);
       let cfg=null; if(cf){ try{ cfg=await cloudDecrypt(cf.text); }catch(e){} }
       S.cloud.state=state; S.cloud.enabled = cfg ? cfg.enabled!==false : true;
-      const fresh = Date.now()-(state.lastRun||0) < 45*60000;
+      // Actif seulement si GitHub a RÉELLEMENT réussi un passage il y a moins de 12 min
+      let lastOk=0;
+      try{ const rr=await fetch(API+'/actions/workflows/'+CLOUD.wf+'/runs?status=success&per_page=1&t='+Date.now(),{headers:ghHeaders()});
+           if(rr.ok){ const jj=await rr.json(); const r0=jj.workflow_runs&&jj.workflow_runs[0]; if(r0) lastOk=Date.parse(r0.updated_at)||0; } }catch(e){}
+      const fresh = !!lastOk && (Date.now()-lastOk < 12*60000) && state.ok!==false;
+      const wasActive=S.cloud.active;
+      S.cloud.lastOk=lastOk;
       S.cloud.active = S.cloud.enabled && fresh;
+      if(wasActive && !S.cloud.active){ try{ jlog('info','☁️ Pilote cloud sans passage récent — le téléphone reprend le pilotage'); }catch(e){} setTimeout(()=>{ try{ runSmartLogic(); }catch(e){} },100); }
       if(S.cloud.active){
         // le cloud fait autorité sur le mode télécommande et la déshumidification
         const cloudRemote=state.remote||{on:false,stamp:0};
@@ -3323,7 +3330,7 @@ if(IS_CLOUD){
   updateUI=function(){
     u();
     if(S.cloud.active && !S.remoteMode && S.cloud.state){
-      const st=S.cloud.state, mins=Math.round((Date.now()-st.lastRun)/60000);
+      const st=S.cloud.state, mins=Math.round((Date.now()-(S.cloud.lastOk||st.lastRun))/60000);
       updatePilotBanner('smart','☁️ Pilote cloud · il y a '+(mins<1?'moins d’1':mins)+' min — '+(st.reason||'—'),false);
     }
   };

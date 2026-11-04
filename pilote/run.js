@@ -40,10 +40,16 @@ const rd=f=>{ try{ return fs.readFileSync(path.join(DATA,f),'utf8'); }catch(e){ 
   const cDh=(cfg&&cfg.dehumid)||{active:false,stamp:0}, sDh=st.dehumid||{active:false,stamp:0};
   const dehumid=(cDh.stamp||0)>(sDh.stamp||0)?cDh:sDh;
   const phoneActedSinceLastRun=(cRem.stamp||0)>(st.lastRun||0);
+  // Longue interruption (> 20 min) : le téléphone a pu piloter entre-temps → pas de « détection télécommande » à ce passage
+  let prevOk=st.lastRun||0;
+  try{ const rr=await fetch('https://api.github.com/repos/'+process.env.GITHUB_REPOSITORY+'/actions/workflows/pilote.yml/runs?status=success&per_page=1',
+         {headers:{'Authorization':'Bearer '+process.env.GITHUB_TOKEN,'Accept':'application/vnd.github+json'}});
+       if(rr.ok){ const j=await rr.json(); const r0=j.workflow_runs&&j.workflow_runs[0]; if(r0) prevOk=Date.parse(r0.updated_at)||prevOk; } }catch(e){}
+  const longGap = !!prevOk && (now-prevOk > 20*60000);
   const seeds={ mc_e:EMAIL, mc_p:PASS,
     cloudInit:JSON.stringify({ presence:cfg?.presence||'home', returnDatetime:cfg?.returnDatetime||null,
       remoteOn:!!remote.on, remoteStamp:remote.stamp||0, S:st.S||null,
-      noDetect: !st.S || (phoneActedSinceLastRun && !cRem.on) }),
+      noDetect: !st.S || (phoneActedSinceLastRun && !cRem.on) || longGap }),
     dehumid:JSON.stringify(dehumid), journal:JSON.stringify(st.journal||[]) };
   if(cfg){
     if(cfg.pdata) seeds.pdata_v2=JSON.stringify(cfg.pdata);
