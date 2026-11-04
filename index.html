@@ -3243,6 +3243,7 @@ if(IS_CLOUD){
         const cloudRemote=state.remote||{on:false,stamp:0};
         if((cloudRemote.stamp||0) > (S._remoteStampLocal||0)){
           if(cloudRemote.on && !S.remoteMode) _arOrig('🎮 Télécommande détectée par le pilote cloud');
+          if(cloudRemote.on) S.remoteSource=cloudRemote.source||'remote';
           if(!cloudRemote.on && S.remoteMode) _crOrig();
           S._remoteStampLocal=cloudRemote.stamp;
         }
@@ -3259,7 +3260,7 @@ if(IS_CLOUD){
       pdata:{tempSlots:PDATA.tempSlots, shutters:PDATA.shutters, plugs:PDATA.plugs},
       smartOn:S.smartOn, userMode:S.userMode, presence:S.presence,
       returnDatetime:S.returnDatetime?new Date(S.returnDatetime).getTime():null,
-      remote:{on:!!S.remoteMode, stamp:S._remoteStampLocal||0},
+      remote:{on:!!S.remoteMode, stamp:S._remoteStampLocal||0, source:S.remoteSource||'app'}, manualFan:!!S.manualFan, appSent:S._appSent||null,
       dehumid:S.dehumid, vanePref:S.vanePref, vaneHPref:S.vaneHPref, vaneHInvert:S.vaneHInvert};
   }
   let _pushTimer=null;
@@ -3402,6 +3403,91 @@ if(!IS_CLOUD){
       <a href="https://console.cron-job.org/signup" target="_blank" style="display:block;margin-top:8px;text-align:center;background:var(--clim);color:#000;border-radius:8px;padding:9px;font-weight:600;font-size:13px;text-decoration:none">Ouvrir cron-job.org ↗</a>`;
   };
   const rcs=renderCloudSettings; window.renderCloudSettings=renderCloudSettings=function(){ rcs(); renderCronHelper(); };
+}
+
+
+// ══════════════════════════════════════════════════════
+// MANUEL DEPUIS L'APP = « je choisis la consigne, l'app gère la ventilation »
+// • Consigne au-dessus de la pièce → chauffage (hors été) ; en dessous l'été → froid
+// • Ventilation « Auto » gérée par l'app selon l'écart (immédiat au réglage, puis en douceur)
+// • Vraie télécommande → plus rien n'est touché
+// ══════════════════════════════════════════════════════
+S.remoteSource = S.remoteSource || 'remote';
+(function(){
+  const ar=activateRemoteMode;
+  activateRemoteMode=function(r){ const was=S.remoteMode; const res=ar(r); if(!was && S.remoteMode) S.remoteSource=String(r).startsWith('🎮 Télécommande') ? 'remote' : 'app'; return res; };
+  // mémoriser ce que l'app a envoyé : sert à reconnaître ensuite un réglage fait à la télécommande
+  const sm=sendManual;
+  sendManual=async function(p,l){ const ok=await sm(p,l); if(ok){ S.remoteSource='app'; S._appSent={fan:Number(S.fanSpeed),setTemp:Number(S.setTemp),mode:S.opMode,at:Date.now()}; } return ok; };
+})();
+let _mfLast=0;
+async function manualFanAuto(immediate){
+  if(!S.remoteMode || S.remoteSource!=='app' || S.manualFan || !mel.deviceId || !S._synced) return;
+  const a=S._appSent, recentCfg = IS_CLOUD && (Date.now()-(window.__CFG_UPDATED__||0) < 3*60000);
+  if(a && !recentCfg && Date.now()-a.at>90000 && (Number(S.fanSpeed)!==a.fan || Number(S.setTemp)!==a.setTemp || S.opMode!==a.mode)){
+    S.remoteSource='remote'; S._remoteStamp=Date.now();
+    try{ jlog('info','🎮 Réglage à la télécommande détecté — l’app ne touche plus à rien'); updateUI(); }catch(e){} return;
+  }
+  if(S.opMode!==1 && S.opMode!==3) return;
+  const n=fanN(), cur=Number(S.fanSpeed);
+  const gap = S.opMode===1 ? (S.setTemp-S.roomTemp) : (S.roomTemp-S.setTemp);
+  let want = gap<=0.3 ? 1 : Math.max(1, 1+Math.round(Math.min(1,Math.max(0,(gap-0.3)/3.2))*(n-1)));
+  if(!immediate && cur>=1 && cur<=n){
+    if(Date.now()-_mfLast < 4*60000) return;            // au plus un réglage toutes les 4 min
+    if(want>cur+2) want=cur+2; if(want<cur-1) want=cur-1; // montée rapide, descente douce
+  }
+  if(want===cur) return;
+  _mfLast=Date.now(); S.fanSpeed=want; S._appSent={fan:want,setTemp:Number(S.setTemp),mode:S.opMode,at:Date.now()};
+  try{ await melSet({SetFanSpeed:want, EffectiveFlags:8}); jlog('ok','💨 Ventilation auto (manuel) : '+FL[want]+' — écart '+gap.toFixed(1)+' °C'); }catch(e){}
+  try{ renderFan(want, S.opMode===1); updateUI(); }catch(e){}
+}
+window.manualFanAuto=manualFanAuto;
+// Pendant le mode manuel « app », chaque passage ajuste la ventilation (cloud ou téléphone)
+(function(){
+  const r=runSmartLogic;
+  runSmartLogic=async function(){
+    if(S.remoteMode && S.remoteSource==='app'){
+      if(IS_CLOUD || !(S.cloud&&S.cloud.active)) return manualFanAuto(false);
+      return;
+    }
+    return r();
+  };
+})();
+// Réglage de la consigne : le bon mode + la ventilation tout de suite
+let _tDeb2=null;
+function adjTemp(d){
+  S.setTemp=Math.min(30,Math.max(10,Math.round(((S.setTemp||20)+d*0.5)*2)/2));
+  const dn=$id('dial-num'); if(dn) dn.textContent=S.setTemp+'°C';
+  const v=S.setTemp; clearTimeout(_tDeb2);
+  _tDeb2=setTimeout(async()=>{
+    S.setTemp=v; S.on=true;
+    const summer=S.season==='summer'||S.userMode==='clim', room=S.roomTemp;
+    let mode=S.opMode;
+    if(room!=null){
+      if(!summer && v>room+0.5 && mode!==1) mode=1;
+      if(summer && v<room-0.5 && mode!==3) mode=3;
+    }
+    const patch={Power:true, SetTemperature:v, EffectiveFlags:FLAG.power|FLAG.temp};
+    if(mode!==S.opMode){ patch.OperationMode=mode; patch.EffectiveFlags|=FLAG.mode; }
+    const ok=await sendManual(patch, '🌡️ Consigne '+v+'°C'+(mode!==S.opMode?(mode===1?' · passage en chauffage 🔥':' · passage en froid ❄️'):''));
+    if(ok){ S.opMode=mode; try{ syncOpBtns(mode); }catch(e){} S.manualFan=false; await manualFanAuto(true); }
+  },700);
+}
+// Bouton « Auto » de la ventilation
+(function(){
+  const sf=setFanSpeed;
+  setFanSpeed=async function(spd){
+    if(spd===0 && S.remoteMode && S.remoteSource==='app'){
+      S.manualFan=false; toast('💨 Ventilation auto : l’app l’adapte à l’écart de température'); _mfLast=0;
+      await manualFanAuto(true); try{ cloudPushSoon&&cloudPushSoon(); }catch(e){} return;
+    }
+    return sf(spd);
+  };
+})();
+// Synchronisation avec le pilote cloud : la source du mode manuel voyage avec lui
+if(IS_CLOUD){
+  try{ const ini=JSON.parse(localStorage.getItem('cloudInit')||'{}'); if(ini.remoteSource) S.remoteSource=ini.remoteSource;
+       if(ini.manualFan!=null) S.manualFan=!!ini.manualFan; }catch(e){}
 }
 
 // ══ DÉMARRAGE UNIQUE ══

@@ -48,7 +48,7 @@ const rd=f=>{ try{ return fs.readFileSync(path.join(DATA,f),'utf8'); }catch(e){ 
   const longGap = !!prevOk && (now-prevOk > 20*60000);
   const seeds={ mc_e:EMAIL, mc_p:PASS,
     cloudInit:JSON.stringify({ presence:cfg?.presence||'home', returnDatetime:cfg?.returnDatetime||null,
-      remoteOn:!!remote.on, remoteStamp:remote.stamp||0, S:st.S||null,
+      remoteOn:!!remote.on, remoteStamp:remote.stamp||0, remoteSource:remote.source||'remote', manualFan: cfg&&cfg.manualFan!=null ? !!cfg.manualFan : null, S:st.S||null,
       noDetect: !st.S || (phoneActedSinceLastRun && !cRem.on) || longGap }),
     dehumid:JSON.stringify(dehumid), journal:JSON.stringify(st.journal||[]) };
   if(cfg){
@@ -57,12 +57,16 @@ const rd=f=>{ try{ return fs.readFileSync(path.join(DATA,f),'utf8'); }catch(e){ 
     if(cfg.vanePref) seeds.vanePref=JSON.stringify(cfg.vanePref);
     seeds.vaneHPref=cfg.vaneHPref==null?'null':String(cfg.vaneHPref); seeds.vaneHInvert=cfg.vaneHInvert?'1':'0';
   }
+  // le téléphone a envoyé une commande plus récente que la mémoire du cloud
+  if(cfg && cfg.appSent && (!st.S || !st.S._appSent || cfg.appSent.at > st.S._appSent.at)){
+    const ci=JSON.parse(seeds.cloudInit); ci.S={...(ci.S||{}),_appSent:cfg.appSent}; seeds.cloudInit=JSON.stringify(ci); }
+  const cfgUpdated = cfg && cfg.updatedAt ? cfg.updatedAt : 0;
   const html=fs.readFileSync(APP,'utf8');
   const vc=new VirtualConsole(); const jsErr=[];
   vc.on('jsdomError',e=>jsErr.push(String(e.message||e).split('\n')[0]));
   const dom=new JSDOM(html,{runScripts:'dangerously',url:'https://pierreristerucci.github.io/confort-maison/',pretendToBeVisual:true,virtualConsole:vc,
     beforeParse(w){
-      w.__CLOUD__=true; w.fetch=(u,o)=>fetch(u,o); w.confirm=()=>true; w.alert=()=>{};
+      w.__CLOUD__=true; w.__CFG_UPDATED__=cfgUpdated; w.fetch=(u,o)=>fetch(u,o); w.confirm=()=>true; w.alert=()=>{};
       if(!w.AbortSignal.timeout) w.AbortSignal.timeout=()=>undefined;
       w.HTMLCanvasElement.prototype.getContext=()=>null;
       for(const [a,b] of Object.entries(seeds)) w.localStorage.setItem(a,b);
@@ -74,9 +78,9 @@ const rd=f=>{ try{ return fs.readFileSync(path.join(DATA,f),'utf8'); }catch(e){ 
   out.ok=!w.__CLOUD_ERROR__ && !!w.__CLOUD_DONE__;
   out.error=w.__CLOUD_ERROR__||(w.__CLOUD_DONE__?'':'délai dépassé');
   out.reason=S.remoteMode?'🎮 Télécommande prioritaire — le pilote attend que vous rendiez la main':(S.dehumid&&S.dehumid.active?'💧 Déshumidification surveillée':(S.lastReason||(S.smartOn===false?'Pilotage intelligent désactivé':'—')));
-  out.S={on:S.on,setTemp:S.setTemp,opMode:S.opMode,fanSpeed:S.fanSpeed,_lastFanChange:S._lastFanChange||0,
+  out.S={on:S.on,setTemp:S.setTemp,opMode:S.opMode,fanSpeed:S.fanSpeed,_lastFanChange:S._lastFanChange||0,_appSent:S._appSent||null,
          vane:S.vane,vaneH:S.vaneH,vaneHold:!!S.vaneHold,vaneHHold:!!S.vaneHHold,manualFan:!!S.manualFan};
-  out.remote={on:!!S.remoteMode, stamp: S._remoteStamp||remote.stamp||0};
+  out.remote={on:!!S.remoteMode, stamp: S._remoteStamp||remote.stamp||0, source:S.remoteSource||remote.source||'remote'};
   out.dehumid=S.dehumid||{active:false}; if(out.dehumid && out.dehumid.active!==dehumid.active) out.dehumid.stamp=now;
   out.clim=raw?{on:raw.Power,setTemp:raw.SetTemperature,mode:raw.OperationMode,fan:raw.SetFanSpeed,room:raw.RoomTemperature,vane:raw.VaneVertical,vaneH:raw.VaneHorizontal}:null;
   try{ out.journal=JSON.parse(w.localStorage.getItem('journal')||'[]').slice(0,40); }catch(e){}
@@ -88,7 +92,7 @@ const rd=f=>{ try{ return fs.readFileSync(path.join(DATA,f),'utf8'); }catch(e){ 
   console.log(out.ok?'✅ passage effectué':'❌ échec du passage (détail chiffré dans state.json)');
   // Indicateur public sans donnée personnelle (visible dans l'onglet Actions)
   const errCat=(out.error||'').replace(/[\r\n]/g,' ').slice(0,80);
-  const modeCat=S.remoteMode?'en attente (mode télécommande — touchez 🎮 dans l’app)':(S.dehumid&&S.dehumid.active?'déshumidification':(S.smartOn===false?'pilotage désactivé':'pilotage intelligent'));
+  const modeCat=S.remoteMode?(S.remoteSource==='app'?'manuel depuis l’app (ventilation gérée)':'en attente (mode télécommande — touchez 🎮 dans l’app)'):(S.dehumid&&S.dehumid.active?'déshumidification':(S.smartOn===false?'pilotage désactivé':'pilotage intelligent'));
   console.log(out.ok?'::notice title=Pilote clim::Passage OK — '+modeCat
                     :'::warning title=Pilote clim::Échec : '+errCat);
   dom.window.close(); process.exit(0);   // pas d'e-mail d'échec toutes les 5 min : l'erreur est visible dans l'app
