@@ -3632,6 +3632,44 @@ window.refreshTempPicker=refreshTempPicker;
 window.onTempPicked=function(sel){ const v=Number(sel.value); if(!isNaN(v)) applySetpoint(v); };
 (function(){ const u=updateUI; updateUI=function(){ u(); try{ if(document.activeElement!==$id('temp-picker')) refreshTempPicker(); }catch(e){} }; })();
 
+
+// ══════════════════════════════════════════════════════
+// AFFICHAGE TOUJOURS À JOUR
+// • Retour sur l'app (arrière-plan → premier plan) : relecture immédiate de la clim
+// • Âge de la mesure affiché sous la température intérieure
+// ══════════════════════════════════════════════════════
+if(!IS_CLOUD){
+  S._lastSync=0; S._lastWeather=0;
+  (function(){
+    const sd=syncDevice; syncDevice=async function(){ await sd(); if(mel.raw) S._lastSync=Date.now(); try{ showSyncAge(); }catch(e){} };
+    const fw=fetchWeather; fetchWeather=async function(){ await fw(); S._lastWeather=Date.now(); };
+  })();
+  function showSyncAge(){
+    const el=$id('int-sub'); if(!el) return;
+    if(!S._lastSync){ el.textContent='Sonde clim'; return; }
+    const m=Math.floor((Date.now()-S._lastSync)/60000);
+    el.textContent='Sonde · '+(m<1?'à l’instant':'il y a '+m+' min');
+    el.style.color = m>=15 ? 'var(--warn)' : '';
+  }
+  window.showSyncAge=showSyncAge;
+  let _resumeBusy=false;
+  async function onResume(){
+    if(_resumeBusy || !mel.deviceId || document.visibilityState==='hidden') return;
+    _resumeBusy=true;
+    try{
+      if(Date.now()-S._lastSync > 60000) await syncDevice();
+      if(Date.now()-S._lastWeather > 10*60000) fetchWeather();
+      if(typeof cloudRefresh==='function') cloudRefresh();
+    }catch(e){} finally{ _resumeBusy=false; }
+  }
+  window.onResume=onResume;
+  document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') onResume(); });
+  window.addEventListener('pageshow',onResume);
+  window.addEventListener('focus',onResume);
+  setInterval(showSyncAge,30000);
+  (function(){ const u=updateUI; updateUI=function(){ u(); try{ showSyncAge(); }catch(e){} }; })();
+}
+
 // ══ DÉMARRAGE UNIQUE ══
 function boot(){
   S.smartOn = localStorage.getItem('smartOn')!=='false';
