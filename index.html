@@ -3302,7 +3302,7 @@ if(IS_CLOUD){
         S.cloud.pendingPush=false;
       } finally { S.cloud._pushing=false; }
       jlog('ok','☁️ Réglages envoyés au pilote cloud');
-      if(runNow) await cloudRunNow(true);
+      if(runNow) await window.cloudRunNow(true);
       return true;
     }catch(e){ jlog('err','☁️ Envoi au pilote cloud : '+e.message); toast('❌ Pilote cloud : '+e.message,'err'); return false; }
   }
@@ -3682,6 +3682,50 @@ if(!IS_CLOUD){
   window.addEventListener('focus',onResume);
   setInterval(showSyncAge,30000);
   (function(){ const u=updateUI; updateUI=function(){ u(); try{ showSyncAge(); }catch(e){} }; })();
+}
+
+
+// ══════════════════════════════════════════════════════
+// PAS DE FAUSSE « TÉLÉCOMMANDE » PENDANT QUE MELCLOUD APPLIQUE NOS COMMANDES
+// MELCloud met jusqu'à ~1 min à confirmer une commande. Tant qu'elle est en cours
+// (HasPendingCommand) ou dans les 3 min qui suivent notre propre commande, une
+// différence entre ce qu'on a envoyé et ce que MELCloud relit n'est pas une main humaine.
+// ══════════════════════════════════════════════════════
+S._lastCmdAt = S._lastCmdAt || 0;
+(function(){
+  const F=[[1,'Power'],[2,'OperationMode'],[4,'SetTemperature'],[8,'SetFanSpeed'],[16,'VaneVertical'],[256,'VaneHorizontal']];
+  const ms=melSet;
+  melSet=async function(p){
+    const prev={...(mel.raw||{})};                      // état relu AVANT notre commande
+    const r=await ms(p);
+    const f=p.EffectiveFlags||0, cmd={}, old={};
+    F.forEach(([bit,k])=>{ if((f&bit) && p[k]!=null){ cmd[k]=p[k]; old[k]=prev[k]; } });
+    S._lastCmdAt=Date.now(); S._lastCmd={...(S._lastCmd||{}),...cmd}; S._lastCmdPrev={...(S._lastCmdPrev||{}),...old};
+    return r;
+  };
+  const mg=melGetState;
+  melGetState=async function(){
+    const d=await mg(); if(!d) return d;
+    const recent = Date.now()-(S._lastCmdAt||0) < 90000;
+    if(S._lastCmd && (d.HasPendingCommand || recent)){
+      // MELCloud n'a pas encore appliqué notre commande : il relit encore l'ANCIENNE valeur.
+      // On ne remplace que dans ce cas précis ; toute autre valeur = vrai réglage humain.
+      for(const k in S._lastCmd){
+        if(d[k]!==S._lastCmd[k] && (d.HasPendingCommand || d[k]===S._lastCmdPrev[k])) d[k]=S._lastCmd[k];
+      }
+    } else if(!recent && !d.HasPendingCommand){ S._lastCmd=null; S._lastCmdPrev=null; }
+    return d;
+  };
+})();
+// Téléphone : au plus une demande de passage par minute
+if(!IS_CLOUD && typeof cloudRunNow==='function'){
+  const rn=window.cloudRunNow;
+  let _lastDispatch=0, _dispTimer=null;
+  window.cloudRunNow=async function(silent){
+    const wait=60000-(Date.now()-_lastDispatch);
+    if(wait>0){ clearTimeout(_dispTimer); _dispTimer=setTimeout(()=>{ _lastDispatch=Date.now(); rn(true); },wait); return; }
+    _lastDispatch=Date.now(); return rn(silent);
+  };
 }
 
 // ══ DÉMARRAGE UNIQUE ══

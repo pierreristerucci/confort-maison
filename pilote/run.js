@@ -78,7 +78,7 @@ const rd=f=>{ try{ return fs.readFileSync(path.join(DATA,f),'utf8'); }catch(e){ 
   out.ok=!w.__CLOUD_ERROR__ && !!w.__CLOUD_DONE__;
   out.error=w.__CLOUD_ERROR__||(w.__CLOUD_DONE__?'':'délai dépassé');
   out.reason=S.remoteMode?'🎮 Télécommande prioritaire — le pilote attend que vous rendiez la main':(S.dehumid&&S.dehumid.active?'💧 Déshumidification surveillée':(S.lastReason||(S.smartOn===false?'Pilotage intelligent désactivé':'—')));
-  out.S={on:S.on,setTemp:S.setTemp,opMode:S.opMode,fanSpeed:S.fanSpeed,_lastFanChange:S._lastFanChange||0,_appSent:S._appSent||null,
+  out.S={on:S.on,setTemp:S.setTemp,opMode:S.opMode,fanSpeed:S.fanSpeed,_lastFanChange:S._lastFanChange||0,_appSent:S._appSent||null,_lastCmdAt:S._lastCmdAt||0,_lastCmd:S._lastCmd||null,_lastCmdPrev:S._lastCmdPrev||null,
          vane:S.vane,vaneH:S.vaneH,vaneHold:!!S.vaneHold,vaneHHold:!!S.vaneHHold,manualFan:!!S.manualFan};
   out.remote={on:!!S.remoteMode, stamp: S._remoteStamp||remote.stamp||0, source:S.remoteSource||remote.source||'remote'};
   out.dehumid=S.dehumid||{active:false}; if(out.dehumid && out.dehumid.active!==dehumid.active) out.dehumid.stamp=now;
