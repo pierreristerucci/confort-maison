@@ -2664,7 +2664,7 @@ async function setOpMode(mode){
     u();
     ['dial-minus','dial-plus'].forEach(id=>{ const b=$id(id); if(b){ b.disabled=false; b.style.opacity='1'; } });
     const dl=$id('dial-lbl-main');
-    if(dl) dl.textContent = S.remoteMode ? 'Consigne manuelle' : (S.smartOn ? 'Planning · + / − pour forcer' : 'Consigne clim');
+    if(dl) dl.textContent = S.remoteMode ? 'Consigne forcée · 🎮 pour revenir au planning' : (S.smartOn ? 'Consigne du planning · touchez pour forcer' : 'Consigne clim');
   };
 })();
 
@@ -2926,9 +2926,10 @@ function smoothFan(want){
   if(S.manualFan) return S.fanSpeed;
   if(!(cur>=1&&cur<=n)) return Math.min(want,2);         // démarrage : on commence doucement
   if(want===cur) return cur;
-  if(Date.now()-S._lastFanChange < 5*60*1000) return cur; // pas plus d'un changement / 5 min
+  if(Date.now()-S._lastFanChange < 4*60*1000) return cur; // un réglage par passage (passages toutes les 5 min)
   S._lastFanChange=Date.now();
-  return cur + (want>cur?1:-1);                           // un seul cran à la fois
+  if(want>=cur+2) return cur+2;                          // grand écart : on rattrape plus vite
+  return cur + (want>cur?1:-1);                           // sinon un cran à la fois (descente toujours douce)
 }
 function smoothAction(action, roomRef, eff){
   if(!action||!action.power) return action;
@@ -3231,6 +3232,7 @@ if(IS_CLOUD){
     return {sha:null, text:await r.text()};
   }
   async function cloudRefresh(){
+    if(S.cloud.pendingPush && S.cloud.token && !S.cloud._pushing){ try{ await cloudPush(false); }catch(e){} }
     try{
       const st=await ghGetFile('state.json'); const cf=await ghGetFile('config.json');
       S.cloud.cfgSha=cf?cf.sha:null;
@@ -3282,11 +3284,23 @@ if(IS_CLOUD){
   async function cloudPush(runNow=true){
     if(!S.cloud.token) return false;
     try{
-      const body=await cloudEncrypt(buildCfg());
-      const cur=await ghGetFile('config.json');
-      const r=await fetch(API+'/contents/config.json',{method:'PUT',headers:{...ghHeaders(),'Content-Type':'application/json'},
-        body:JSON.stringify({message:'réglages depuis le téléphone',branch:CLOUD.branch,content:btoa(unescape(encodeURIComponent(body))),...(cur&&cur.sha?{sha:cur.sha}:{})})});
-      if(!r.ok) throw new Error('GitHub '+r.status);
+      // un seul envoi à la fois ; nouvel essai si GitHub signale un conflit
+      while(S.cloud._pushing) await new Promise(r=>setTimeout(r,300));
+      S.cloud._pushing=true;
+      try{
+        let r=null;
+        for(let k=0;k<4;k++){
+          const body=await cloudEncrypt(buildCfg());
+          const cur=await ghGetFile('config.json');
+          r=await fetch(API+'/contents/config.json',{method:'PUT',headers:{...ghHeaders(),'Content-Type':'application/json'},
+            body:JSON.stringify({message:'réglages depuis le téléphone',branch:CLOUD.branch,content:btoa(unescape(encodeURIComponent(body))),...(cur&&cur.sha?{sha:cur.sha}:{})})});
+          if(r.ok) break;
+          if(r.status!==409 && r.status!==422) break;
+          await new Promise(res=>setTimeout(res,1500*(k+1)));
+        }
+        if(!r||!r.ok){ S.cloud.pendingPush=true; throw new Error('GitHub '+(r?r.status:'?')+' — nouvel essai automatique'); }
+        S.cloud.pendingPush=false;
+      } finally { S.cloud._pushing=false; }
       jlog('ok','☁️ Réglages envoyés au pilote cloud');
       if(runNow) await cloudRunNow(true);
       return true;
@@ -3296,7 +3310,7 @@ if(IS_CLOUD){
   async function cloudRunNow(silent){
     if(!S.cloud.token){ toast('Token du téléphone requis','err'); return; }
     const r=await fetch(API+'/actions/workflows/'+CLOUD.wf+'/dispatches',{method:'POST',headers:{...ghHeaders(),'Content-Type':'application/json'},body:JSON.stringify({ref:'main'})});
-    if(r.ok||r.status===204){ if(!silent) toast('☁️ Passage du pilote lancé (≈1 min)'); jlog('info','☁️ Passage du pilote demandé'); setTimeout(cloudRefresh,90000); }
+    if(r.ok||r.status===204){ if(!silent) toast('☁️ Passage du pilote lancé (≈1 min)'); jlog('info','☁️ Passage du pilote demandé'); setTimeout(cloudRefresh,90000); setTimeout(()=>{ syncDevice().catch(()=>{}); },75000); setTimeout(()=>{ syncDevice().catch(()=>{}); },150000); }
     else { toast('❌ Lancement refusé ('+r.status+')','err'); }
   }
   window.cloudRunNow=cloudRunNow;
