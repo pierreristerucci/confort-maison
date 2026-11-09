@@ -3677,9 +3677,9 @@ if(!IS_CLOUD){
     }catch(e){} finally{ _resumeBusy=false; }
   }
   window.onResume=onResume;
-  document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') onResume(); });
-  window.addEventListener('pageshow',onResume);
-  window.addEventListener('focus',onResume);
+  document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') window.onResume(); });
+  window.addEventListener('pageshow',()=>window.onResume());
+  window.addEventListener('focus',()=>window.onResume());
   setInterval(showSyncAge,30000);
   (function(){ const u=updateUI; updateUI=function(){ u(); try{ showSyncAge(); }catch(e){} }; })();
 }
@@ -3726,6 +3726,33 @@ if(!IS_CLOUD && typeof cloudRunNow==='function'){
     if(wait>0){ clearTimeout(_dispTimer); _dispTimer=setTimeout(()=>{ _lastDispatch=Date.now(); rn(true); },wait); return; }
     _lastDispatch=Date.now(); return rn(silent);
   };
+}
+
+
+// ══════════════════════════════════════════════════════
+// JOURNAL : activité du pilote cloud visible + plus de doublons à l'ouverture
+// ══════════════════════════════════════════════════════
+if(!IS_CLOUD){
+  // pas de relecture « retour dans l'app » avant la toute première lecture
+  (function(){ const r=window.onResume; if(r){ window.onResume=async function(){ if(!S._synced) return; return r(); }; } })();
+  function renderJournal(){
+    const el=$id('journal'); if(!el) return;
+    const col={ok:'var(--ok)',err:'var(--err)',info:'var(--muted)'};
+    const row=j=>`<div style="font-size:11px;padding:4px 0;border-bottom:1px solid var(--border);color:${col[j.type]||'var(--text)'}"><span style="font-family:monospace;color:var(--muted)">${j.t}</span> ${j.msg}</div>`;
+    const dedupe=list=>list.filter((j,i)=>!i || j.t!==list[i-1].t || j.msg!==list[i-1].msg);
+    const phone=dedupe(JOURNAL).slice(0,25);
+    const st=S.cloud&&S.cloud.state;
+    let html='<div style="font-size:12px;font-weight:600;margin:4px 0">📱 Téléphone</div>'+(phone.length?phone.map(row).join(''):'<div style="font-size:12px;color:var(--muted)">Aucun événement</div>');
+    if(st && Array.isArray(st.journal)){
+      const cl=dedupe(st.journal).slice(0,25);
+      const when=st.lastRun?new Date(st.lastRun).toLocaleString('fr-FR',{weekday:'short',hour:'2-digit',minute:'2-digit'}):'—';
+      html+=`<div style="font-size:12px;font-weight:600;margin:12px 0 4px">☁️ Pilote cloud (app fermée) · état enregistré ${when}</div>`
+          + (cl.length?cl.map(row).join(''):'<div style="font-size:12px;color:var(--muted)">Aucun événement</div>');
+    }
+    el.innerHTML=html;
+  }
+  window.renderJournal=renderJournal;
+  (function(){ const u=updateUI; updateUI=function(){ u(); try{ renderJournal(); }catch(e){} }; })();
 }
 
 // ══ DÉMARRAGE UNIQUE ══
