@@ -222,6 +222,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:'DM San
 .add-btn:hover{border-color:var(--clim);color:var(--clim)}
 select.plan-select{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 8px;color:var(--text);font-family:inherit;font-size:12px;outline:none}
 .rt-row{text-align:center;padding:8px;background:var(--surface2);border-radius:var(--radius-sm);margin-bottom:10px;font-size:14px}
+#dial-num::after{content:" ▾";font-size:.4em;opacity:.55;vertical-align:middle}
 </style>
 <script>
 if('serviceWorker' in navigator){
@@ -359,8 +360,10 @@ if('serviceWorker' in navigator){
       <div class="clim-section">
         <div class="dial-row">
           <div class="dial-btn" id="dial-minus" onclick="adjTemp(-1)">−</div>
-          <div class="dial-center">
+          <div class="dial-center" style="position:relative">
             <div class="dial-temp" id="dial-num">—°</div>
+            <select id="temp-picker" aria-label="Choisir la consigne" onfocus="refreshTempPicker()" onchange="onTempPicked(this)"
+              style="position:absolute;left:0;right:0;top:0;height:60px;width:100%;opacity:0;font-size:16px;cursor:pointer"></select>
             <div class="dial-lbl" id="dial-lbl-main">Consigne clim</div>
             <div class="dial-plan" id="dial-target-lbl"></div>
           </div>
@@ -3586,6 +3589,48 @@ window.renderSafetySettings=function(){
       <button style="${b}" onclick="S.safety.awayFloor=Math.min(18,S.safety.awayFloor+1);saveSafety();renderSafetySettings()">+</button></span></div>`;
 };
 (function(){ const st=setTab; setTab=function(n,el){ st(n,el); if(n==='settings') renderSafetySettings(); }; })();
+
+
+// ══════════════════════════════════════════════════════
+// CONSIGNE : jusqu'à 31 °C + choix direct en touchant le gros chiffre
+// ══════════════════════════════════════════════════════
+function setpointRange(){ return (S.opMode===3||S.opMode===2) ? [16,31] : [10,31]; }
+async function applySetpoint(v){
+  const [lo,hi]=setpointRange(); v=Math.min(hi,Math.max(lo,Math.round(v*2)/2));
+  S.setTemp=v; S.on=true;
+  const dn=$id('dial-num'); if(dn) dn.textContent=v+'°C';
+  const summer=S.season==='summer'||S.userMode==='clim', room=S.roomTemp;
+  let mode=S.opMode;
+  if(room!=null){
+    if(!summer && v>room+0.5 && mode!==1) mode=1;
+    if(summer && v<room-0.5 && mode!==3) mode=3;
+  }
+  const patch={Power:true, SetTemperature:v, EffectiveFlags:FLAG.power|FLAG.temp};
+  if(mode!==S.opMode){ patch.OperationMode=mode; patch.EffectiveFlags|=FLAG.mode; }
+  const ok=await sendManual(patch,'🌡️ Consigne '+v+'°C'+(mode!==S.opMode?(mode===1?' · passage en chauffage 🔥':' · passage en froid ❄️'):''));
+  if(ok){ S.opMode=mode; try{ syncOpBtns(mode); }catch(e){} S.manualFan=false; await manualFanAuto(true); }
+  try{ refreshTempPicker(); }catch(e){}
+}
+window.applySetpoint=applySetpoint;
+let _tDeb3=null;
+function adjTemp(d){
+  const [lo,hi]=setpointRange();
+  S.setTemp=Math.min(hi,Math.max(lo,Math.round(((S.setTemp||20)+d*0.5)*2)/2));
+  const dn=$id('dial-num'); if(dn) dn.textContent=S.setTemp+'°C';
+  const v=S.setTemp; clearTimeout(_tDeb3); _tDeb3=setTimeout(()=>applySetpoint(v),700);
+}
+function dpTemp(id,d){ const s=dpSlot(id); if(!s) return; s.temp=Math.min(31,Math.max(10,Math.round((Number(s.temp)+d)*2)/2)); dpSave('🌡️ '+s.name+' : '+s.temp+' °C'); }
+// Liste déroulante native posée sur le gros chiffre
+function refreshTempPicker(){
+  const sel=$id('temp-picker'); if(!sel) return;
+  const [lo,hi]=setpointRange(), cur=Math.round((Number(S.setTemp)||20)*2)/2;
+  let html=''; for(let t=hi;t>=lo;t-=0.5){ html+=`<option value="${t}"${t===cur?' selected':''}>${t.toFixed(1).replace('.',',')} °C</option>`; }
+  if(sel._html!==html){ sel.innerHTML=html; sel._html=html; }
+  sel.value=String(cur);
+}
+window.refreshTempPicker=refreshTempPicker;
+window.onTempPicked=function(sel){ const v=Number(sel.value); if(!isNaN(v)) applySetpoint(v); };
+(function(){ const u=updateUI; updateUI=function(){ u(); try{ if(document.activeElement!==$id('temp-picker')) refreshTempPicker(); }catch(e){} }; })();
 
 // ══ DÉMARRAGE UNIQUE ══
 function boot(){
