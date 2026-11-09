@@ -304,6 +304,7 @@ if('serviceWorker' in navigator){
     <button onclick="toggleVigilance()" style="background:none;border:none;color:#92400E;cursor:pointer;font-size:16px;padding:2px">✕</button>
   </div>
 
+  <div id="pause-banner" style="display:none;margin:6px 12px 0;padding:10px 12px;border-radius:10px;border:1px solid #FBBF2466;background:#FBBF2412;align-items:center;gap:10px;font-size:13px"></div>
   <!-- ALERTES -->
   <div class="alert-strip">
     <div class="alert-item wind" id="wind-warning">
@@ -613,6 +614,11 @@ if('serviceWorker' in navigator){
         <div style="font-size:11px;color:var(--muted);margin-bottom:4px">Appliquée par le pilotage à chaque changement de mode</div>
         <div id="vane-settings"></div>
         <div id="vaneh-settings" style="margin-top:6px"></div>
+      </div>
+      <div class="panel-section">
+        <div style="font-size:13px;font-weight:600;margin-bottom:4px">🛟 Garde-fou température</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Même pilote en pause ou télécommande : si la maison descend sous le seuil, le chauffage est relancé à seuil + 1 °C.</div>
+        <div id="safety-settings"></div>
       </div>
       <div class="panel-section">
         <div style="font-size:13px;font-weight:600;margin-bottom:4px">☁️ Pilote cloud (fonctionne app fermée)</div>
@@ -3260,7 +3266,7 @@ if(IS_CLOUD){
       pdata:{tempSlots:PDATA.tempSlots, shutters:PDATA.shutters, plugs:PDATA.plugs},
       smartOn:S.smartOn, userMode:S.userMode, presence:S.presence,
       returnDatetime:S.returnDatetime?new Date(S.returnDatetime).getTime():null,
-      remote:{on:!!S.remoteMode, stamp:S._remoteStampLocal||0, source:S.remoteSource||'app'}, manualFan:!!S.manualFan, appSent:S._appSent||null,
+      remote:{on:!!S.remoteMode, stamp:S._remoteStampLocal||0, source:S.remoteSource||'app'}, manualFan:!!S.manualFan, appSent:S._appSent||null, safety:S.safety,
       dehumid:S.dehumid, vanePref:S.vanePref, vaneHPref:S.vaneHPref, vaneHInvert:S.vaneHInvert};
   }
   let _pushTimer=null;
@@ -3489,6 +3495,97 @@ if(IS_CLOUD){
   try{ const ini=JSON.parse(localStorage.getItem('cloudInit')||'{}'); if(ini.remoteSource) S.remoteSource=ini.remoteSource;
        if(ini.manualFan!=null) S.manualFan=!!ini.manualFan; }catch(e){}
 }
+
+
+// ══════════════════════════════════════════════════════
+// GARDE-FOU TEMPÉRATURE — toujours actif, même pilote en pause
+// • Maison < seuil (18 °C, 14 °C en absence) → chauffage à seuil + 1 °C
+// • Fonctionne côté cloud (app fermée) et côté téléphone
+// ══════════════════════════════════════════════════════
+S.safety=Object.assign({on:true,floor:18,awayFloor:14},JSON.parse(localStorage.getItem('safety')||'{}'));
+function saveSafety(){ localStorage.setItem('safety',JSON.stringify(S.safety)); try{ cloudPushSoon&&cloudPushSoon(); }catch(e){} }
+async function safetyCheck(){
+  if(!S.safety.on || !mel.deviceId || !S._synced || S.roomTemp==null) return;
+  const floor = S.presence==='away' ? S.safety.awayFloor : S.safety.floor;
+  if(S.roomTemp >= floor) { if(S.safetyActive && S.roomTemp>=floor+1){ S.safetyActive=false; try{ jlog('ok','🛟 Garde-fou : température revenue à '+S.roomTemp+' °C'); }catch(e){} } return; }
+  const heating = S.on && S.opMode===1 && Number(S.setTemp)>=floor+1;
+  if(heating) return;                                      // déjà en chauffe suffisante
+  const t=floor+1;
+  S.on=true; S.opMode=1; S.setTemp=t; S.safetyActive=true;
+  try{
+    await melSet({Power:true, OperationMode:1, SetTemperature:t, SetFanSpeed:Math.min(3,fanN()), EffectiveFlags:15});
+    S.fanSpeed=Math.min(3,fanN());
+    S._appSent={fan:S.fanSpeed,setTemp:t,mode:1,at:Date.now()};
+    jlog('err','🛟 Garde-fou : maison à '+S.roomTemp+' °C (sous '+floor+' °C) → chauffage '+t+' °C');
+    sendAlert('🛟 Garde-fou chauffage','Maison à '+S.roomTemp+' °C — chauffage relancé à '+t+' °C', true, 'safety');
+  }catch(e){ try{ jlog('err','🛟 Garde-fou : commande refusée ('+e.message+')'); }catch(x){} }
+  try{ updateUI(); }catch(e){}
+}
+window.safetyCheck=safetyCheck;
+if(IS_CLOUD){
+  try{ const ini=JSON.parse(localStorage.getItem('cloudInit')||'{}'); if(ini.safety) S.safety=Object.assign(S.safety,ini.safety); }catch(e){}
+  const sd=syncDevice;
+  syncDevice=async function(){ await sd(); await safetyCheck(); };
+} else {
+  const sd=syncDevice;
+  syncDevice=async function(){ await sd(); if(!(S.cloud&&S.cloud.active)) await safetyCheck(); };
+}
+
+// ══════════════════════════════════════════════════════
+// PAUSE VISIBLE : bandeau si le pilote ne pilote plus depuis plus d'1 h
+// ══════════════════════════════════════════════════════
+function pauseInfo(){
+  const st=(S.cloud&&S.cloud.active&&S.cloud.state)||null;
+  const remoteOn = st ? !!(st.remote&&st.remote.on) : !!S.remoteMode;
+  const src = st ? ((st.remote&&st.remote.source)||'remote') : (S.remoteSource||'remote');
+  if(remoteOn && src==='app') return null;                 // manuel depuis l'app : la ventilation reste gérée
+  const since = remoteOn ? ((st&&st.remote&&st.remote.stamp)||S._remoteStampLocal||S._remoteStamp||0)
+                         : (S.smartOn===false ? Number(localStorage.getItem('smartOffSince')||0) : 0);
+  if(!remoteOn && S.smartOn!==false) return null;
+  return {why: remoteOn?'réglage fait sur la clim (télécommande ou app MELCloud)':'pilotage intelligent coupé', since};
+}
+(function(){
+  const u=updateUI;
+  updateUI=function(){
+    u();
+    const el=$id('pause-banner'); if(!el) return;
+    const p=pauseInfo();
+    if(!p || !p.since || Date.now()-p.since < 60*60000){ el.style.display='none'; return; }
+    const h=Math.round((Date.now()-p.since)/3600000), dur=h>=48?Math.round(h/24)+' jours':h+' h';
+    el.style.display='flex';
+    el.innerHTML=`<div style="flex:1"><div style="font-weight:600;color:var(--warn)">⏸ Pilote en pause depuis ${dur}</div>
+      <div style="font-size:11px;color:var(--muted)">${p.why} · garde-fou ${S.safety.on?'actif (≥ '+S.safety.floor+' °C)':'désactivé'}</div></div>
+      <button onclick="resumePilot()" style="background:var(--clim);color:#000;border:none;border-radius:8px;padding:8px 10px;font-weight:600;font-size:12px;cursor:pointer">▶ Reprendre</button>`;
+  };
+})();
+window.resumePilot=function(){
+  if(!S.smartOn){ S.smartOn=true; localStorage.setItem('smartOn','true'); localStorage.removeItem('smartOffSince'); }
+  if(S.remoteMode) cancelRemoteMode(); else { try{ cloudPushSoon&&cloudPushSoon(); }catch(e){} if(S.smartOn) runSmartLogic(); }
+  toast('▶ Pilotage intelligent repris'); try{ updateUI(); }catch(e){}
+};
+// Confirmation avant de couper le pilotage intelligent
+(function(){
+  const ts=toggleSmart;
+  toggleSmart=function(){
+    if(S.smartOn && !confirm('Couper le pilotage intelligent ?\n\nLa clim ne suivra plus le planning (seul le garde-fou restera actif).')) { try{ updateUI(); }catch(e){} return; }
+    ts();
+    if(!S.smartOn) localStorage.setItem('smartOffSince',String(Date.now())); else localStorage.removeItem('smartOffSince');
+  };
+})();
+// Réglages : garde-fou
+window.renderSafetySettings=function(){
+  const el=$id('safety-settings'); if(!el) return;
+  const b='width:32px;height:32px;border-radius:50%;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:16px;cursor:pointer';
+  el.innerHTML=`<label class="plan-row" style="cursor:pointer"><span>Garde-fou actif</span>
+      <input type="checkbox" ${S.safety.on?'checked':''} onchange="S.safety.on=this.checked;saveSafety();renderSafetySettings();toast(this.checked?'🛟 Garde-fou activé':'Garde-fou désactivé')" style="width:18px;height:18px;accent-color:var(--clim)"></label>
+    <div class="plan-row"><span>Seuil à la maison</span><span style="display:flex;align-items:center;gap:8px">
+      <button style="${b}" onclick="S.safety.floor=Math.max(10,S.safety.floor-1);saveSafety();renderSafetySettings()">−</button><b>${S.safety.floor} °C</b>
+      <button style="${b}" onclick="S.safety.floor=Math.min(21,S.safety.floor+1);saveSafety();renderSafetySettings()">+</button></span></div>
+    <div class="plan-row"><span>Seuil en absence</span><span style="display:flex;align-items:center;gap:8px">
+      <button style="${b}" onclick="S.safety.awayFloor=Math.max(7,S.safety.awayFloor-1);saveSafety();renderSafetySettings()">−</button><b>${S.safety.awayFloor} °C</b>
+      <button style="${b}" onclick="S.safety.awayFloor=Math.min(18,S.safety.awayFloor+1);saveSafety();renderSafetySettings()">+</button></span></div>`;
+};
+(function(){ const st=setTab; setTab=function(n,el){ st(n,el); if(n==='settings') renderSafetySettings(); }; })();
 
 // ══ DÉMARRAGE UNIQUE ══
 function boot(){

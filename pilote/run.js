@@ -48,7 +48,7 @@ const rd=f=>{ try{ return fs.readFileSync(path.join(DATA,f),'utf8'); }catch(e){ 
   const longGap = !!prevOk && (now-prevOk > 20*60000);
   const seeds={ mc_e:EMAIL, mc_p:PASS,
     cloudInit:JSON.stringify({ presence:cfg?.presence||'home', returnDatetime:cfg?.returnDatetime||null,
-      remoteOn:!!remote.on, remoteStamp:remote.stamp||0, remoteSource:remote.source||'remote', manualFan: cfg&&cfg.manualFan!=null ? !!cfg.manualFan : null, S:st.S||null,
+      remoteOn:!!remote.on, remoteStamp:remote.stamp||0, remoteSource:remote.source||'remote', safety: cfg&&cfg.safety ? cfg.safety : null, manualFan: cfg&&cfg.manualFan!=null ? !!cfg.manualFan : null, S:st.S||null,
       noDetect: !st.S || (phoneActedSinceLastRun && !cRem.on) || longGap }),
     dehumid:JSON.stringify(dehumid), journal:JSON.stringify(st.journal||[]) };
   if(cfg){
@@ -93,7 +93,7 @@ const rd=f=>{ try{ return fs.readFileSync(path.join(DATA,f),'utf8'); }catch(e){ 
   // Indicateur public sans donnée personnelle (visible dans l'onglet Actions)
   const errCat=(out.error||'').replace(/[\r\n]/g,' ').slice(0,80);
   const modeCat=S.remoteMode?(S.remoteSource==='app'?'manuel depuis l’app (ventilation gérée)':'en attente (mode télécommande — touchez 🎮 dans l’app)'):(S.dehumid&&S.dehumid.active?'déshumidification':(S.smartOn===false?'pilotage désactivé':'pilotage intelligent'));
-  console.log(out.ok?'::notice title=Pilote clim::Passage OK — '+modeCat
+  console.log(out.ok?'::notice title=Pilote clim::Passage OK — '+modeCat+(S.safetyActive?' · 🛟 garde-fou actif':'')
                     :'::warning title=Pilote clim::Échec : '+errCat);
   dom.window.close(); process.exit(0);   // pas d'e-mail d'échec toutes les 5 min : l'erreur est visible dans l'app
 })().catch(e=>{ console.log('❌ erreur technique'); process.exit(0); });
