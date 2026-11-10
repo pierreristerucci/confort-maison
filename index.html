@@ -899,7 +899,10 @@ async function syncDevice(){
     computeThermal();
     const spd=S.manualFan?S.fanSpeed:(S.fanSpeed||S.fanAuto||idealFan(S.roomTemp,S.setTemp));
     renderFan(spd,S.opMode===1);syncOpBtns(S.opMode);updateUI();
-    const rc=(prevOn!==S.on||prevTemp!==S.setTemp||prevMode!==S.opMode||(prevFan!==S.fanSpeed&&S.fanSpeed>0));
+    // consigne et vitesse ne comptent que dans les modes où la clim les utilise vraiment
+    const spMeaningful = ![2,7].includes(prevMode) && ![2,7].includes(S.opMode);
+    const fanMeaningful = [1,3].includes(prevMode) && [1,3].includes(S.opMode);
+    const rc=(prevOn!==S.on||prevMode!==S.opMode||(spMeaningful&&prevTemp!==S.setTemp)||(fanMeaningful&&prevFan!==S.fanSpeed&&S.fanSpeed>0));
     if(rc&&!S.busy&&!S.manualOverride&&!S.remoteMode){
       const ch=[];
       if(prevOn!==S.on) ch.push(S.on?'allumée':'éteinte');
@@ -2935,7 +2938,7 @@ function smoothAction(action, roomRef, eff){
   if(!action||!action.power) return action;
   const heating = eff!=='summer';
   // Chauffe douce au lieu de « ventilation douce » quand on est chez soi
-  if(heating && action.opMode===8 && S.presence!=='away' && roomRef!=null && roomRef <= action.temp+1.5){
+  if(heating && (action.opMode===7||action.opMode===8) && S.presence!=='away' && roomRef!=null && roomRef <= action.temp+1.5){
     action={...action, opMode:1,
       reason: action.reason.replace(/·?\s*ventilation douce.*$/,'').replace(/—\s*$/,'').trim()+' · maintien en chauffe douce'};
   }
@@ -3706,7 +3709,7 @@ S._lastCmdAt = S._lastCmdAt || 0;
   const mg=melGetState;
   melGetState=async function(){
     const d=await mg(); if(!d) return d;
-    const recent = Date.now()-(S._lastCmdAt||0) < 90000;
+    const recent = Date.now()-(S._lastCmdAt||0) < 15*60000;   // MELCloud peut mettre plusieurs minutes
     if(S._lastCmd && (d.HasPendingCommand || recent)){
       // MELCloud n'a pas encore appliqué notre commande : il relit encore l'ANCIENNE valeur.
       // On ne remplace que dans ce cas précis ; toute autre valeur = vrai réglage humain.
